@@ -7,7 +7,6 @@ Future<CameraDescription> _getCamera(CameraLensDirection dir) async => await ava
   ),
 );
 
-
 Uint8List concatenatePlanes(List<Plane> planes) {
   final WriteBuffer allBytes = WriteBuffer();
   planes.forEach((plane) => allBytes.putUint8List(plane.bytes));
@@ -16,7 +15,7 @@ Uint8List concatenatePlanes(List<Plane> planes) {
 
 FirebaseVisionImageMetadata buildMetaData(
   CameraImage image,
-  ImageRotation rotation,
+  ImageRotation rotation
 ) {
   return FirebaseVisionImageMetadata(
     rawFormat: image.format.raw,
@@ -26,7 +25,7 @@ FirebaseVisionImageMetadata buildMetaData(
       (plane) => FirebaseVisionImagePlaneMetadata(
         bytesPerRow: plane.bytesPerRow,
         height: plane.height,
-        width: plane.width,
+        width: plane.width
       ),
     ).toList(),
   );
@@ -35,7 +34,7 @@ FirebaseVisionImageMetadata buildMetaData(
 Future<T> _detect<T>(
   CameraImage image,
   HandleDetection<T> handleDetection,
-  ImageRotation rotation,
+  ImageRotation rotation
 ) async {
   return handleDetection(
     FirebaseVisionImage.fromBytes(

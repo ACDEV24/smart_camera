@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -44,6 +45,7 @@ class SmartCamera<T> extends StatefulWidget {
   final CameraLensDirection cameraLensDirection;
   final ResolutionPreset resolution;
   final Function onDispose;
+  final ImageRotation imageRotation;
 
   const SmartCamera({
     Key key,
@@ -54,8 +56,9 @@ class SmartCamera<T> extends StatefulWidget {
     this.errorBuilder,
     this.overlayBuilder,
     this.cameraLensDirection = CameraLensDirection.back,
-    this.resolution,
+    this.resolution = ResolutionPreset.high,
     this.onDispose,
+    this.imageRotation = ImageRotation.rotation0
   }) : super(key: key);
 
   static SmartCamera<List<Face>> faceDetection({
@@ -68,7 +71,8 @@ class SmartCamera<T> extends StatefulWidget {
     final CameraLensDirection cameraLensDirection,
     final ResolutionPreset resolution,
     final Function onDispose,
-    
+    final bool horizontal,
+    final ImageRotation imageRotation = ImageRotation.rotation0
   }) => SmartCamera<List<Face>>(
     detector: FirebaseVision.instance.faceDetector(
       faceDetectorOptions
@@ -80,7 +84,8 @@ class SmartCamera<T> extends StatefulWidget {
     overlayBuilder: overlayBuilder,
     cameraLensDirection: cameraLensDirection,
     resolution: resolution,
-    onDispose: onDispose
+    onDispose: onDispose,
+    imageRotation: imageRotation,
   );  
 
   static SmartCamera<VisionText> textRecognizer({
@@ -91,7 +96,9 @@ class SmartCamera<T> extends StatefulWidget {
     final WidgetBuilder overlayBuilder,
     final CameraLensDirection cameraLensDirection,
     final ResolutionPreset resolution,
-    final Function onDispose
+    final Function onDispose,
+    final bool horizontal,
+    final ImageRotation imageRotation = ImageRotation.rotation0
   }) => SmartCamera<VisionText>(
     detector: FirebaseVision.instance.textRecognizer().processImage,
     onResult: onResult,
@@ -101,10 +108,11 @@ class SmartCamera<T> extends StatefulWidget {
     overlayBuilder: overlayBuilder,
     cameraLensDirection: cameraLensDirection,
     resolution: resolution,
-    onDispose: onDispose
+    onDispose: onDispose,
+    imageRotation: imageRotation,
   );
 
-  static Future<File> convertCameraImagetoFile(CameraImage image) async {
+  static Future<File> convertCameraImagetoFile(CameraImage image, [bool vertical = true]) async {
 
     final String path = await getPath();
 
@@ -136,9 +144,9 @@ class SmartCamera<T> extends StatefulWidget {
         }
       }
 
-      img = imglib.copyRotate(img, 90);
+      if(vertical) img = imglib.copyRotate(img, 90);
 
-      imglib.PngEncoder pngEncoder = new imglib.PngEncoder(level: 0, filter: 0);
+      imglib.PngEncoder pngEncoder = imglib.PngEncoder(level: 0, filter: 0);
       final List<int> png = pngEncoder.encodeImage(img);
 
       final File file = await File('$path/${DateTime.now().toIso8601String()}.png').writeAsBytes(png);
@@ -148,6 +156,54 @@ class SmartCamera<T> extends StatefulWidget {
       print(">>>>>>>>>>>> ERROR:" + e.toString());
     }
     return null;
+  }
+
+  static Future<String> convertCameraImagetoBase64(CameraImage image, [bool base = false]) async {
+
+    try {
+
+      final int width = image.width;
+      final int height = image.height;
+      final int uvRowStride = image.planes[1].bytesPerRow;
+      final int uvPixelStride = image.planes[1].bytesPerPixel;
+
+      imglib.Image img = imglib.Image(width, height);
+
+      for(int x=0; x < width; x++) {
+
+        for(int y=0; y < height; y++) {
+
+          final int uvIndex = uvPixelStride * (x/2).floor() + uvRowStride*(y/2).floor();
+          final int index = y * width + x;
+
+          final int yp = image.planes[0].bytes[index];
+          final int up = image.planes[1].bytes[uvIndex];
+          final int vp = image.planes[2].bytes[uvIndex];
+
+          final int r = (yp + vp * 1436 / 1024 - 179).round().clamp(0, 255);
+          final int g = (yp - up * 46549 / 131072 + 44 -vp * 93604 / 131072 + 91).round().clamp(0, 255);
+          final int b = (yp + up * 1814 / 1024 - 227).round().clamp(0, 255);
+
+          img.data[index] = shift | (b << 16) | (g << 8) | r;
+        }
+      }
+
+      img = imglib.copyRotate(img, 90);
+
+      final Uint8List bytes = img.getBytes();
+      final String base64Image = base64Encode(bytes);
+
+      return base64Image;
+    } catch (e) {
+      print(">>>>>>>>>>>> ERROR:" + e.toString());
+    }
+    return null;
+  }
+
+  static Uint8List concatenatePlanes(List<Plane> planes) {
+    final WriteBuffer allBytes = WriteBuffer();
+    planes.forEach((plane) => allBytes.putUint8List(plane.bytes));
+    return allBytes.done().buffer.asUint8List();
   }
 
   @override
@@ -254,7 +310,7 @@ class _SmartCameraState<T> extends State<SmartCamera<T>> with WidgetsBindingObse
   Future<void> Function() get prepareForVideoRecording =>
       _cameraController.prepareForVideoRecording;
 
-  Future<void> startVideoRecording() async {
+  Future<void> startVideoRecording(String path) async {
     await _cameraController.stopImageStream();
     return _cameraController.startVideoRecording();
   }
@@ -289,8 +345,10 @@ class _SmartCameraState<T> extends State<SmartCamera<T>> with WidgetsBindingObse
       }
     }
 
-    CameraDescription description =
-        await _getCamera(widget.cameraLensDirection);
+    final CameraDescription description = await _getCamera(
+      widget.cameraLensDirection
+    );
+
     if (description == null) {
       _smartCameraState = _CameraState.error;
       _cameraError = CameraError.noCameraAvailable;
@@ -416,8 +474,11 @@ class _SmartCameraState<T> extends State<SmartCamera<T>> with WidgetsBindingObse
     if (!_alreadyCheckingImage && mounted) {
       _alreadyCheckingImage = true;
       try {
-        final T results =
-            await _detect<T>(cameraImage, widget.detector, _rotation);
+        final T results = await _detect<T>(
+          cameraImage,
+          widget.detector,
+          widget.imageRotation
+        );
         widget.onResult(results, cameraImage);
       } catch (err, _) {
         this.widget.onError('$err');
@@ -446,3 +507,4 @@ class _SmartCameraState<T> extends State<SmartCamera<T>> with WidgetsBindingObse
     return Container();
   }
 }
+
