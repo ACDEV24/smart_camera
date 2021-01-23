@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/rendering.dart';
@@ -112,6 +113,9 @@ class SmartCamera<T> extends StatefulWidget {
     imageRotation: imageRotation,
   );
 
+  /// This method convert an CameraImage object to File
+  /// [image] Is the cameraImage returned from onResult method
+  /// If your picture is horizontal, then send the second argument false
   static Future<File> convertCameraImagetoFile(CameraImage image, [bool vertical = true]) async {
 
     final String path = await getPath();
@@ -158,7 +162,9 @@ class SmartCamera<T> extends StatefulWidget {
     return null;
   }
 
-  static Future<String> convertCameraImagetoBase64(CameraImage image, [bool base = false]) async {
+  /// This method convert an CameraImage object to base64 image
+  /// [image] Is the cameraImage returned from onResult method
+  static Future<String> convertCameraImagetoBase64(CameraImage image) async {
 
     try {
 
@@ -198,6 +204,58 @@ class SmartCamera<T> extends StatefulWidget {
       print(">>>>>>>>>>>> ERROR:" + e.toString());
     }
     return null;
+  }
+
+  /// [imageFile] Is the File returned from convertCameraImagetoFile method
+  /// [face] Is the last face returned from onResult method
+  static Future<File> getFaceFromFile(File imageFile, Face face) async {
+
+    final String path = await getPath();
+    
+    final imglib.Image image = _copyCrop(
+      src: imglib.decodeImage(imageFile.readAsBytesSync()),
+      x: face.boundingBox.topLeft.dx.toInt(),
+      y: face.boundingBox.topLeft.dy.toInt() - 100,
+      h: face.boundingBox.height.toInt() + 110,
+      w: face.boundingBox.width.toInt(),
+    );
+
+    return File('$path/${Random().nextInt(1000000)}.png')..writeAsBytesSync(imglib.encodePng(image));
+  }
+
+  static imglib.Image _copyCrop({
+    imglib.Image src,
+    int x,
+    int y,
+    int w,
+    int h
+  }) {
+
+    x = x.clamp(0, src.width - 1).toInt();
+    y = y.clamp(0, src.height - 1).toInt();
+
+    if (x + w > src.width) {
+      w = src.width - x;
+    }
+    if (y + h > src.height) {
+      h = src.height - y;
+    }
+
+    final imglib.Image dst = imglib.Image(
+      w,
+      h,
+      channels: src.channels,
+      exif: src.exif,
+      iccp: src.iccProfile
+    );
+
+    for (var yi = 0, sy = y; yi < h; ++yi, ++sy) {
+      for (var xi = 0, sx = x; xi < w; ++xi, ++sx) {
+        dst.setPixel(xi, yi, src.getPixel(sx, sy));
+      }
+    }
+
+    return dst;
   }
 
   static Uint8List concatenatePlanes(List<Plane> planes) {
